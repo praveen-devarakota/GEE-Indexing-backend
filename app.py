@@ -15,27 +15,28 @@ app = Flask(__name__)
 CORS(app)
 
 # -------------------- Earth Engine Init -------------------- #
+import tempfile
+
 def init_earth_engine():
     try:
         sa_json = os.environ.get("GEE_SERVICE_ACCOUNT_JSON")
 
-        # Production (Render)
+        # ---------- PRODUCTION (Render) ----------
         if sa_json:
-            service_account_info = json.loads(sa_json)
+            # Write JSON to a temp file (Render-safe)
+            with tempfile.NamedTemporaryFile(mode="w+", suffix=".json", delete=False) as f:
+                f.write(sa_json)
+                key_path = f.name
 
             credentials = ee.ServiceAccountCredentials(
-                service_account_info["client_email"],
-                key_data=service_account_info
+                email=None,
+                key_file=key_path
             )
 
-            ee.Initialize(
-                credentials,
-                project=service_account_info["project_id"]
-            )
-
+            ee.Initialize(credentials)
             logger.info("Earth Engine initialized using service account (Render).")
 
-        # Local development
+        # ---------- LOCAL ----------
         else:
             ee.Initialize(project="flask-backend-478306")
             logger.info("Earth Engine initialized using local user credentials.")
