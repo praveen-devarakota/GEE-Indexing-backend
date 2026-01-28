@@ -17,15 +17,11 @@ CORS(app)
 # -------------------- Earth Engine Init -------------------- #
 def init_earth_engine():
     try:
-        if os.getenv("GEE_SERVICE_ACCOUNT_JSON"):
-            raw_sa = os.getenv("GEE_SERVICE_ACCOUNT_JSON")
+        sa_json = os.environ.get("GEE_SERVICE_ACCOUNT_JSON")
 
-            if isinstance(raw_sa, str):
-                service_account_info = json.loads(raw_sa)
-            elif isinstance(raw_sa, dict):
-                service_account_info = raw_sa
-            else:
-                raise RuntimeError("Invalid GEE_SERVICE_ACCOUNT_JSON format")
+        # Production (Render)
+        if sa_json:
+            service_account_info = json.loads(sa_json)
 
             credentials = ee.ServiceAccountCredentials(
                 service_account_info["client_email"],
@@ -37,19 +33,18 @@ def init_earth_engine():
                 project=service_account_info["project_id"]
             )
 
-            logger.info(
-                "Earth Engine initialized using service account (Render)."
-            )
+            logger.info("Earth Engine initialized using service account (Render).")
 
+        # Local development
         else:
             ee.Initialize(project="flask-backend-478306")
-            logger.info(
-                "Earth Engine initialized using local user credentials."
-            )
+            logger.info("Earth Engine initialized using local user credentials.")
 
     except Exception as e:
         logger.error(f"Error initializing Earth Engine: {e}")
         raise RuntimeError(f"Error initializing Earth Engine: {e}")
+
+
 # Initialize once at startup
 init_earth_engine()
 
