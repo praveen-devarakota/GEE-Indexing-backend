@@ -3,6 +3,7 @@ from flask_cors import CORS
 import ee
 import datetime
 import os
+import json
 import logging
 
 # -------------------- Logging -------------------- #
@@ -14,27 +15,37 @@ app = Flask(__name__)
 CORS(app)
 
 # -------------------- Earth Engine Init -------------------- #
-# Set these in your environment or hard-code locally (DO NOT hard-code in public repos)
-SERVICE_ACCOUNT = os.getenv("GEE_SERVICE_ACCOUNT", "praveen88@flask-backend-478306.iam.gserviceaccount.com")
-KEY_FILE = os.getenv("GEE_KEY_FILE", "gee-api.json")  # path to your JSON key on server
-
-try:
-    credentials = ee.ServiceAccountCredentials(SERVICE_ACCOUNT, KEY_FILE)
-    ee.Initialize(credentials)
-    logger.info("Google Earth Engine initialized successfully.")
-except Exception as e:
-    logger.error(f"Error initializing Earth Engine: {e}")
-    raise RuntimeError(f"Error initializing Earth Engine: {e}")
-
-# -------------------- Utility Functions -------------------- #
-
-def validate_date_range(start_date, end_date):
+def init_earth_engine():
     try:
-        start_dt = datetime.datetime.strptime(start_date, "%Y-%m-%d")
-        end_dt = datetime.datetime.strptime(end_date, "%Y-%m-%d")
-        return start_dt < end_dt
-    except ValueError:
-        return False
+        # ✅ Production (Render)
+        if os.getenv("GEE_SERVICE_ACCOUNT_JSON"):
+            service_account_info = json.loads(
+                os.getenv("GEE_SERVICE_ACCOUNT_JSON")
+            )
+
+            credentials = ee.ServiceAccountCredentials(
+                service_account_info["client_email"],
+                key_data=service_account_info
+            )
+            ee.Initialize(credentials)
+            logger.info("Earth Engine initialized using service account (Render).")
+
+        # ✅ Local development
+        else:
+            ee.Initialize()
+            logger.info("Earth Engine initialized using local user credentials.")
+
+    except Exception as e:
+        logger.error(f"Error initializing Earth Engine: {e}")
+        raise RuntimeError(f"Error initializing Earth Engine: {e}")
+
+# Initialize once at startup
+init_earth_engine()
+
+# -------------------- Example Route -------------------- #
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok"})
 
 
 def mask_s2_clouds(image):
