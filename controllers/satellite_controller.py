@@ -107,6 +107,20 @@ def composite():
 
 
 # -------------------- TIME SERIES -------------------- #
+def compute_derivatives(values):
+    """
+    values: list of floats
+    returns: first_derivative, second_derivative
+    """
+    first = [None]
+    for i in range(1, len(values)):
+        first.append(values[i] - values[i - 1])
+
+    second = [None, None]
+    for i in range(2, len(values)):
+        second.append(first[i] - first[i - 1])
+
+    return first, second
 
 def timeseries():
     # ✅ CORS preflight
@@ -159,6 +173,7 @@ def timeseries():
 
         fc = ee.FeatureCollection(collection.map(extract)).getInfo()
 
+        # ---------- Base Time Series ----------
         results = [
             {
                 "date": f["properties"]["date"],
@@ -172,6 +187,26 @@ def timeseries():
         ]
 
         results.sort(key=lambda x: x["date"])
+
+        # ---------- Derivative Computation ----------
+        ndvi_vals = [r["NDVI"] for r in results]
+        ndwi_vals = [r["NDWI"] for r in results]
+        nsmi_vals = [r["NSMI"] for r in results]
+
+        ndvi_d1, ndvi_d2 = compute_derivatives(ndvi_vals)
+        ndwi_d1, ndwi_d2 = compute_derivatives(ndwi_vals)
+        nsmi_d1, nsmi_d2 = compute_derivatives(nsmi_vals)
+
+        # ---------- Attach derivatives ----------
+        for i, r in enumerate(results):
+            r["NDVI_d1"] = None if ndvi_d1[i] is None else round(ndvi_d1[i], 5)
+            r["NDVI_d2"] = None if ndvi_d2[i] is None else round(ndvi_d2[i], 5)
+
+            r["NDWI_d1"] = None if ndwi_d1[i] is None else round(ndwi_d1[i], 5)
+            r["NDWI_d2"] = None if ndwi_d2[i] is None else round(ndwi_d2[i], 5)
+
+            r["NSMI_d1"] = None if nsmi_d1[i] is None else round(nsmi_d1[i], 5)
+            r["NSMI_d2"] = None if nsmi_d2[i] is None else round(nsmi_d2[i], 5)
 
         return jsonify({
             "success": True,
