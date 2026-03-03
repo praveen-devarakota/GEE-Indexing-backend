@@ -1,3 +1,5 @@
+import traceback
+
 from flask import jsonify, request
 import ee
 import datetime
@@ -107,6 +109,8 @@ def composite():
 
 
 # -------------------- TIME SERIES -------------------- #
+# -------------------- TIME SERIES -------------------- #
+
 def compute_derivatives(values):
     """
     values: list of floats
@@ -122,8 +126,9 @@ def compute_derivatives(values):
 
     return first, second
 
+
 def timeseries():
-    # ✅ CORS preflight
+
     if request.method == "OPTIONS":
         return jsonify({}), 200
 
@@ -133,6 +138,8 @@ def timeseries():
         point = data.get("point", {})
         lat = point.get("lat")
         lng = point.get("lng")
+        ranges = data.get("ranges", [])
+        max_cloud = float(data.get("max_cloud", 30))
 
         if lat is None or lng is None:
             return jsonify({
@@ -140,80 +147,82 @@ def timeseries():
                 "error": "Missing latitude or longitude"
             }), 400
 
+        if not ranges or len(ranges) < 1:
+            return jsonify({
+                "success": False,
+                "error": "At least one date range required"
+            }), 400
+
         lat = float(lat)
         lng = float(lng)
 
-        start_date = data.get("start_date", "2017-06-23")
-        end_date = data.get(
-            "end_date",
-            datetime.datetime.now().strftime("%Y-%m-%d")
-        )
-        max_cloud = float(data.get("max_cloud", 30))
-
-        if not validate_date_range(start_date, end_date):
-            return jsonify({"success": False, "error": "Invalid date range"}), 400
-
         geom = ee.Geometry.Point([lng, lat])
-        collection = get_s2_collection(geom, start_date, end_date, max_cloud)
 
-        def extract(img):
-            stats = img.reduceRegion(
-                reducer=ee.Reducer.mean(),
-                geometry=geom.buffer(20),
-                scale=10,
-                maxPixels=1e9
+        all_results = []
+
+        for range_obj in ranges:
+
+            start_date = range_obj.get("start_date")
+            end_date = range_obj.get("end_date")
+
+            if not validate_date_range(start_date, end_date):
+                continue
+
+            collection = get_s2_collection(
+                geom, start_date, end_date, max_cloud
             )
-            return ee.Feature(None, {
-                "date": img.date().format("YYYY-MM-dd"),
-                "NDVI": stats.get("NDVI"),
-                "NDWI": stats.get("NDWI"),
-                "NSMI": stats.get("NSMI"),
-                "cloud": img.get("CLOUDY_PIXEL_PERCENTAGE")
+
+            collection = collection.sort(
+                "CLOUDY_PIXEL_PERCENTAGE"
+            ).limit(150)
+
+            def extract(img):
+                stats = img.reduceRegion(
+                    reducer=ee.Reducer.mean(),
+                    geometry=geom.buffer(20),
+                    scale=10,
+                    maxPixels=1e9
+                )
+
+                return ee.Feature(None, {
+                    "date": img.date().format("YYYY-MM-dd"),
+                    "NDVI": stats.get("NDVI"),
+                    "NDWI": stats.get("NDWI"),
+                    "NSMI": stats.get("NSMI")
+                })
+
+            fc = ee.FeatureCollection(collection.map(extract)).getInfo()
+
+            series = []
+
+            for f in fc.get("features", []):
+                props = f.get("properties", {})
+
+                if props.get("NDVI") is None:
+                    continue
+
+                series.append({
+                    "date": props.get("date"),
+                    "NDVI": round(float(props["NDVI"]), 4) if props.get("NDVI") else None,
+                    "NDWI": round(float(props["NDWI"]), 4) if props.get("NDWI") else None,
+                    "NSMI": round(float(props["NSMI"]), 4) if props.get("NSMI") else None
+                })
+
+            series.sort(key=lambda x: x["date"])
+
+            all_results.append({
+                "range": f"{start_date} to {end_date}",
+                "data": series
             })
-
-        fc = ee.FeatureCollection(collection.map(extract)).getInfo()
-
-        # ---------- Base Time Series ----------
-        results = [
-            {
-                "date": f["properties"]["date"],
-                "NDVI": round(float(f["properties"]["NDVI"]), 4),
-                "NDWI": round(float(f["properties"]["NDWI"]), 4),
-                "NSMI": round(float(f["properties"]["NSMI"]), 4),
-                "cloud_cover": float(f["properties"]["cloud"])
-            }
-            for f in fc["features"]
-            if f["properties"]["NDVI"] is not None
-        ]
-
-        results.sort(key=lambda x: x["date"])
-
-        # ---------- Derivative Computation ----------
-        ndvi_vals = [r["NDVI"] for r in results]
-        ndwi_vals = [r["NDWI"] for r in results]
-        nsmi_vals = [r["NSMI"] for r in results]
-
-        ndvi_d1, ndvi_d2 = compute_derivatives(ndvi_vals)
-        ndwi_d1, ndwi_d2 = compute_derivatives(ndwi_vals)
-        nsmi_d1, nsmi_d2 = compute_derivatives(nsmi_vals)
-
-        # ---------- Attach derivatives ----------
-        for i, r in enumerate(results):
-            r["NDVI_d1"] = None if ndvi_d1[i] is None else round(ndvi_d1[i], 5)
-            r["NDVI_d2"] = None if ndvi_d2[i] is None else round(ndvi_d2[i], 5)
-
-            r["NDWI_d1"] = None if ndwi_d1[i] is None else round(ndwi_d1[i], 5)
-            r["NDWI_d2"] = None if ndwi_d2[i] is None else round(ndwi_d2[i], 5)
-
-            r["NSMI_d1"] = None if nsmi_d1[i] is None else round(nsmi_d1[i], 5)
-            r["NSMI_d2"] = None if nsmi_d2[i] is None else round(nsmi_d2[i], 5)
 
         return jsonify({
             "success": True,
-            "data": results,
-            "count": len(results)
+            "ranges": all_results
         })
 
     except Exception as e:
         logger.error(e, exc_info=True)
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
