@@ -109,13 +109,7 @@ def composite():
 
 
 # -------------------- TIME SERIES -------------------- #
-# -------------------- TIME SERIES -------------------- #
-
 def compute_derivatives(values):
-    """
-    values: list of floats
-    returns: first_derivative, second_derivative
-    """
     first = [None]
     for i in range(1, len(values)):
         first.append(values[i] - values[i - 1])
@@ -138,7 +132,20 @@ def timeseries():
         point = data.get("point", {})
         lat = point.get("lat")
         lng = point.get("lng")
+
         ranges = data.get("ranges", [])
+
+        # 🔥 Convert single range format to ranges list
+        single_mode = False
+        if not ranges and data.get("start_date") and data.get("end_date"):
+            ranges = [{
+                "start_date": data.get("start_date"),
+                "end_date": data.get("end_date")
+            }]
+            single_mode = True
+        elif ranges and len(ranges) == 1:
+            single_mode = True
+
         max_cloud = float(data.get("max_cloud", 30))
 
         if lat is None or lng is None:
@@ -147,7 +154,7 @@ def timeseries():
                 "error": "Missing latitude or longitude"
             }), 400
 
-        if not ranges or len(ranges) < 1:
+        if not ranges:
             return jsonify({
                 "success": False,
                 "error": "At least one date range required"
@@ -170,11 +177,7 @@ def timeseries():
 
             collection = get_s2_collection(
                 geom, start_date, end_date, max_cloud
-            )
-
-            collection = collection.sort(
-                "CLOUDY_PIXEL_PERCENTAGE"
-            ).limit(150)
+            ).sort("CLOUDY_PIXEL_PERCENTAGE").limit(150)
 
             def extract(img):
                 stats = img.reduceRegion(
@@ -203,16 +206,45 @@ def timeseries():
 
                 series.append({
                     "date": props.get("date"),
-                    "NDVI": round(float(props["NDVI"]), 4) if props.get("NDVI") else None,
-                    "NDWI": round(float(props["NDWI"]), 4) if props.get("NDWI") else None,
-                    "NSMI": round(float(props["NSMI"]), 4) if props.get("NSMI") else None
+                    "NDVI": round(float(props["NDVI"]), 4),
+                    "NDWI": round(float(props["NDWI"]), 4),
+                    "NSMI": round(float(props["NSMI"]), 4)
                 })
 
             series.sort(key=lambda x: x["date"])
 
+            # 🔥 ADD DERIVATIVES ONLY IN SINGLE MODE
+            if single_mode and series:
+
+                ndvi_vals = [r["NDVI"] for r in series]
+                ndwi_vals = [r["NDWI"] for r in series]
+                nsmi_vals = [r["NSMI"] for r in series]
+
+                ndvi_d1, ndvi_d2 = compute_derivatives(ndvi_vals)
+                ndwi_d1, ndwi_d2 = compute_derivatives(ndwi_vals)
+                nsmi_d1, nsmi_d2 = compute_derivatives(nsmi_vals)
+
+                for i, r in enumerate(series):
+                    r["NDVI_d1"] = None if ndvi_d1[i] is None else round(ndvi_d1[i], 5)
+                    r["NDVI_d2"] = None if ndvi_d2[i] is None else round(ndvi_d2[i], 5)
+
+                    r["NDWI_d1"] = None if ndwi_d1[i] is None else round(ndwi_d1[i], 5)
+                    r["NDWI_d2"] = None if ndwi_d2[i] is None else round(ndwi_d2[i], 5)
+
+                    r["NSMI_d1"] = None if nsmi_d1[i] is None else round(nsmi_d1[i], 5)
+                    r["NSMI_d2"] = None if nsmi_d2[i] is None else round(nsmi_d2[i], 5)
+
             all_results.append({
                 "range": f"{start_date} to {end_date}",
                 "data": series
+            })
+
+        # 🔥 Return format based on mode
+        if single_mode:
+            return jsonify({
+                "success": True,
+                "data": all_results[0]["data"],
+                "count": len(all_results[0]["data"])
             })
 
         return jsonify({
