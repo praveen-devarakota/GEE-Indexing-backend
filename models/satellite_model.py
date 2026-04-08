@@ -3,11 +3,11 @@ import ee
 def mask_s2_clouds(image):
     scl = image.select("SCL")
     good = (
-        scl.eq(2)
-        .Or(scl.eq(4))
-        .Or(scl.eq(5))
-        .Or(scl.eq(6))
-        .Or(scl.eq(11))
+        scl.eq(2)   # dark features
+        .Or(scl.eq(4))  # vegetation
+        .Or(scl.eq(5))  # bare soil
+        .Or(scl.eq(6))  # water
+        .Or(scl.eq(11)) # snow/ice
     )
     return image.updateMask(good).copyProperties(image, image.propertyNames())
 
@@ -24,7 +24,7 @@ def get_s2_collection(geom, start_date, end_date, max_cloud):
         ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
         .filterBounds(geom)
         .filterDate(start_date, end_date)
-        .filter(ee.Filter.lte("CLOUDY_PIXEL_PERCENTAGE", max_cloud))
+        # 🔥 REMOVED CLOUD FILTER (IMPORTANT)
         .map(mask_s2_clouds)
         .map(add_indices)
     )
