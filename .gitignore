@@ -7,3 +7,4 @@ gee-api.json
 # Python cache
 __pycache__/
 *.pyc
+.env
