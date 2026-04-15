@@ -286,3 +286,4 @@ def chat_rag():
             "success": False,
             "error": str(e)
         }), 500
+    
