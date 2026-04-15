@@ -2,7 +2,7 @@ import traceback
 from flask import jsonify, request
 import ee
 import datetime
-
+from services.rag_service import analyze_with_rag, chat_with_rag
 from models.satellite_model import get_s2_collection
 from utils.helpers import validate_date_range
 from utils.logger import logger
@@ -220,6 +220,64 @@ def timeseries():
             "success": True,
             "data": all_results[0]["data"],
             "count": len(all_results[0]["data"])
+        })
+
+    except Exception as e:
+        logger.error(e, exc_info=True)
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+    
+# -------------------- RAG ANALYSIS -------------------- #
+def analyze_rag():
+    try:
+        data = request.get_json() or {}
+
+        series = data.get("data")
+
+        if not series:
+            return jsonify({
+                "success": False,
+                "error": "Missing 'data'"
+            }), 400
+
+        # 🔥 Call RAG service
+        result = analyze_with_rag(series)
+
+        return jsonify({
+            "success": True,
+            "analysis": result
+        })
+
+    except Exception as e:
+        logger.error(e, exc_info=True)
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+# -------------------- RAG CHAT -------------------- #
+
+def chat_rag():
+    try:
+        data = request.get_json() or {}
+
+        question = data.get("question")
+
+        if not question:
+            return jsonify({
+                "success": False,
+                "error": "Missing 'question'"
+            }), 400
+
+        # 🔥 Call RAG chat
+        answer = chat_with_rag(question)
+
+        return jsonify({
+            "success": True,
+            "answer": answer
         })
 
     except Exception as e:
