@@ -7,12 +7,7 @@ You are given processed insights from satellite time-series data.
 Data:
 {summary}
 
-STRICT RULES:
-- DO NOT perform calculations
-- DO NOT derive new values
-- USE ONLY provided insights
-- DO NOT explain reasoning
-- DO NOT add extra text
+
 
 Return ONLY valid JSON:
 

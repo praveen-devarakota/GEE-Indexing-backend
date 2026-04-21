@@ -57,7 +57,7 @@ def composite():
 
         geom = ee.Geometry(geometry).buffer(50)
 
-        collection = get_s2_collection(geom, start_date, end_date, max_cloud)
+        collection = get_s2_collection(geom, start_date, end_date, max_cloud).sort("system:time_start")
 
         count = collection.size().getInfo()
         if count == 0:
@@ -68,12 +68,6 @@ def composite():
         if index_type == "NDVI":
             index_image = base_image.select("NDVI")
             vis_params = {"min": -1, "max": 1, "palette": ["#0000ff", "#ffffff", "#00ff00"]}
-        elif index_type == "NDWI":
-            index_image = base_image.select("NDWI")
-            vis_params = {"min": -1, "max": 1, "palette": ["#8b4513", "#ffffff", "#0000ff"]}
-        elif index_type == "NSMI":
-            index_image = base_image.select("NSMI")
-            vis_params = {"min": -1, "max": 1, "palette": ["#ffff00", "#ffffff", "#ff0000"]}
         elif index_type == "TRUE_COLOR":
             index_image = base_image.select(["B4", "B3", "B2"])
             vis_params = {"min": 0, "max": 3000}
@@ -99,16 +93,34 @@ def composite():
 
 # -------------------- TIME SERIES -------------------- #
 
-def compute_derivatives(values):
-    first = [None]
-    for i in range(1, len(values)):
-        first.append(values[i] - values[i - 1])
+def create_weekly_composites(collection, start_date, end_date):
+    start = ee.Date(start_date)
+    end = ee.Date(end_date)
 
-    second = [None, None]
-    for i in range(2, len(values)):
-        second.append(first[i] - first[i - 1])
+    n_days = end.difference(start, "day")
+    step = 7  # ~4–5 scenes/month
 
-    return first, second
+    def make_composite(i):
+        i = ee.Number(i)
+        start_i = start.advance(i, "day")
+        end_i = start_i.advance(step, "day")
+
+        subset = collection.filterDate(start_i, end_i)
+
+        composite = ee.Image(
+            ee.Algorithms.If(
+                subset.size().gt(0),
+                subset.median(),
+                ee.Image.constant(0).rename("NDVI")  # safe fallback
+            )
+        )
+
+        return composite.set({
+            "system:time_start": start_i.millis()
+        })
+
+    indices = ee.List.sequence(0, n_days.subtract(1), step)
+    return ee.ImageCollection(indices.map(make_composite))
 
 
 def timeseries():
@@ -117,109 +129,94 @@ def timeseries():
         return jsonify({}), 200
 
     try:
-        print("🔥 NEW CODE RUNNING")
-
         data = request.get_json() or {}
 
         point = data.get("point", {})
         lat = point.get("lat")
         lng = point.get("lng")
 
-        ranges = data.get("ranges", [])
-
-        single_mode = False
-        if not ranges and data.get("start_date") and data.get("end_date"):
-            ranges = [{
-                "start_date": data.get("start_date"),
-                "end_date": data.get("end_date")
-            }]
-            single_mode = True
-        elif ranges and len(ranges) == 1:
-            single_mode = True
+        start_date = data.get("start_date")
+        end_date = data.get("end_date")
 
         if lat is None or lng is None:
             return jsonify({"success": False, "error": "Missing latitude or longitude"}), 400
 
         geom = ee.Geometry.Point([float(lng), float(lat)])
 
-        all_results = []
+        # Step 1: Raw collection
+        raw_collection = get_s2_collection(geom, start_date, end_date, 60)
 
-        for range_obj in ranges:
+        # Step 2: Weekly composites
+        collection = create_weekly_composites(
+            raw_collection, start_date, end_date
+        ).sort("system:time_start")
 
-            start_date = range_obj.get("start_date")
-            end_date = range_obj.get("end_date")
+        # Step 3: Extract NDVI safely
+        def extract(img):
+            stats = img.reduceRegion(
+                reducer=ee.Reducer.mean(),
+                geometry=geom.buffer(50),
+                scale=10,
+                maxPixels=1e9
+            )
 
-            if not validate_date_range(start_date, end_date):
+            ndvi = ee.Algorithms.If(
+                stats.contains("NDVI"),
+                stats.get("NDVI"),
+                None
+            )
+
+            return ee.Feature(None, {
+                "date": img.date().format("YYYY-MM-dd"),
+                "NDVI": ndvi
+            })
+
+        fc = ee.FeatureCollection(collection.map(extract)).getInfo()
+
+        # Step 4: Clean data
+        series = []
+
+        for f in fc.get("features", []):
+            props = f.get("properties", {})
+            ndvi = props.get("NDVI")
+
+            if ndvi is None:
                 continue
 
-            # 🔥 NO CLOUD FILTER + SORT BY TIME
-            collection = get_s2_collection(
-                geom, start_date, end_date, 100
-            ).sort("system:time_start")
+            try:
+                ndvi = float(ndvi)
+            except:
+                continue
 
-            def extract(img):
-                stats = img.reduceRegion(
-                    reducer=ee.Reducer.mean(),
-                    geometry=geom.buffer(50),
-                    scale=10,
-                    maxPixels=1e9
-                )
+            if ndvi < -0.2 or ndvi > 1:
+                continue
 
-                return ee.Feature(None, {
-                    "date": img.date().format("YYYY-MM-dd"),
-                    "NDVI": stats.get("NDVI"),
-                    "NDWI": stats.get("NDWI"),
-                    "NSMI": stats.get("NSMI")
-                })
-
-            # 🔥 INCREASE LIMIT
-            fc = ee.FeatureCollection(collection.map(extract)).limit(2000).getInfo()
-
-            series = []
-
-            for f in fc.get("features", []):
-                props = f.get("properties", {})
-
-                # 🔥 KEEP ALL SCENES
-                series.append({
-                    "date": props.get("date"),
-                    "NDVI": None if props.get("NDVI") is None else round(float(props["NDVI"]), 4),
-                    "NDWI": None if props.get("NDWI") is None else round(float(props["NDWI"]), 4),
-                    "NSMI": None if props.get("NSMI") is None else round(float(props["NSMI"]), 4)
-                })
-
-            series.sort(key=lambda x: x["date"])
-
-            # DERIVATIVES
-            if single_mode and series:
-
-                ndvi_vals = [r["NDVI"] or 0 for r in series]
-                ndwi_vals = [r["NDWI"] or 0 for r in series]
-                nsmi_vals = [r["NSMI"] or 0 for r in series]
-
-                ndvi_d1, ndvi_d2 = compute_derivatives(ndvi_vals)
-                ndwi_d1, ndwi_d2 = compute_derivatives(ndwi_vals)
-                nsmi_d1, nsmi_d2 = compute_derivatives(nsmi_vals)
-
-                for i, r in enumerate(series):
-                    r["NDVI_d1"] = None if ndvi_d1[i] is None else round(ndvi_d1[i], 5)
-                    r["NDVI_d2"] = None if ndvi_d2[i] is None else round(ndvi_d2[i], 5)
-
-                    r["NDWI_d1"] = None if ndwi_d1[i] is None else round(ndwi_d1[i], 5)
-                    r["NDWI_d2"] = None if ndwi_d2[i] is None else round(ndwi_d2[i], 5)
-
-                    r["NSMI_d1"] = None if nsmi_d1[i] is None else round(nsmi_d1[i], 5)
-                    r["NSMI_d2"] = None if nsmi_d2[i] is None else round(nsmi_d2[i], 5)
-
-            all_results.append({
-                "range": f"{start_date} to {end_date}",
-                "data": series
+            series.append({
+                "date": props.get("date"),
+                "NDVI": round(ndvi, 4)
             })
+
+        series.sort(key=lambda x: x["date"])
+
+        # Step 5: Smooth NDVI
+        def smooth(values):
+            smoothed = []
+            for i in range(len(values)):
+                neighbors = values[max(0, i-1):min(len(values), i+2)]
+                smoothed.append(sum(neighbors) / len(neighbors))
+            return smoothed
+
+        if series:
+            ndvi_vals = [r["NDVI"] for r in series]
+            smooth_vals = smooth(ndvi_vals)
+
+            for i, r in enumerate(series):
+                r["NDVI"] = round(smooth_vals[i], 4)
 
         return jsonify({
             "success": True,
-            "data": all_results[0]["data"],
-            "count": len(all_results[0]["data"])
+            "data": series,
+            "count": len(series)
         })
 
     except Exception as e:
@@ -228,8 +225,10 @@ def timeseries():
             "success": False,
             "error": str(e)
         }), 500
-    
+
+
 # -------------------- RAG ANALYSIS -------------------- #
+
 def analyze_rag():
     try:
         data = request.get_json() or {}
@@ -242,7 +241,6 @@ def analyze_rag():
                 "error": "Missing 'data'"
             }), 400
 
-        # 🔥 Call RAG service
         result = analyze_with_rag(series)
 
         return jsonify({
@@ -272,7 +270,6 @@ def chat_rag():
                 "error": "Missing 'question'"
             }), 400
 
-        # 🔥 Call RAG chat
         answer = chat_with_rag(question)
 
         return jsonify({
@@ -286,4 +283,3 @@ def chat_rag():
             "success": False,
             "error": str(e)
         }), 500
-    
