@@ -1,121 +1,109 @@
-import json
 from rag.chunking import chunk_time_series
-from rag.summarizer import summarize_chunks
-from rag.prompt_builder import build_analysis_prompt, build_chat_prompt
-from rag.memory import set_memory, get_memory
-from rag.llm_handler import generate_response
-
-
-# 🔥 Intelligence layer
-def enrich_summary(summary, data):
-    insights = []
-
-    ndvi_vals = [d["NDVI"] for d in data if d["NDVI"] is not None]
-    ndwi_vals = [d["NDWI"] for d in data if d["NDWI"] is not None]
-
-    # ---- TREND ----
-    if len(ndvi_vals) >= 2:
-        if ndvi_vals[-1] > ndvi_vals[0]:
-            insights.append("Overall vegetation increased over time")
-        else:
-            insights.append("Overall vegetation decreased over time")
-
-    # ---- SHARP DROPS ----
-    for i in range(1, len(data)):
-        prev = data[i - 1]["NDVI"]
-        curr = data[i]["NDVI"]
-
-        if prev is not None and curr is not None and (prev - curr) > 0.05:
-            insights.append(f"Sharp vegetation drop around {data[i]['date']}")
-
-    # ---- WATER TREND ----
-    if len(ndwi_vals) >= 2:
-        if ndwi_vals[-1] > ndwi_vals[0]:
-            insights.append("Water content increased")
-        else:
-            insights.append("Water content decreased")
-
-    # ---- MISSING DATA ----
-    missing = sum(1 for d in data if d["NDVI"] is None)
-    if missing > 0:
-        insights.append(f"{missing} missing NDVI observations detected")
-
-    return summary + "\n\nComputed Insights:\n" + "\n".join(insights)
-
+from rag.embedder import embed_texts, embed_query
+from rag.vector_store import (
+    build_index,
+    save_index,
+    load_index,
+    search
+)
 
 def run_analysis_pipeline(data):
+
+    print("\n========== ANALYSIS ==========")
+    print("Input Records:", len(data))
+
+    if len(data):
+        print("First Record:")
+        print(data[0])
+
     chunks = chunk_time_series(data)
-    summary = summarize_chunks(chunks)
 
-    summary = enrich_summary(summary, data)
+    embeddings = embed_texts(chunks)
 
-    prompt = build_analysis_prompt(summary)
-    raw_response = generate_response(prompt)
+    build_index(
+        embeddings,
+        chunks
+    )
 
-    cleaned = raw_response.strip().replace("```json", "").replace("```", "")
+    save_index()
 
-    try:
-        parsed = json.loads(cleaned)
-    except Exception as e:
-        print("❌ JSON parse error:", e)
-        parsed = {
-            "trend": "unknown",
-            "key_events": [],
-            "summary": cleaned
-        }
+    return {
+        "status": "success",
+        "summary":
+        f"""
+Indexed {len(chunks)} NDVI periods.
 
-    # ✅ store BOTH analysis + raw data
-    set_memory({
-        "analysis": parsed,
-        "data": data
-    })
+You may ask about:
 
-    return parsed
-
-
-def run_chat_pipeline(question):
-    context = get_memory()
-
-    if not context:
-        return {"answer": "No analysis available. Run analysis first."}
-
-    analysis = context.get("analysis", {})
-    data = context.get("data", [])
-
-    # 🔥 SORTED DATES
-    dates = sorted([d["date"] for d in data if d.get("date")])
-    start_date = dates[0] if dates else "unknown"
-    end_date = dates[-1] if dates else "unknown"
-
-    # 🔥 GRAPH CURVE (VERY IMPORTANT)
-    ndvi_series = [(d["date"], d["NDVI"]) for d in data if d.get("NDVI") is not None]
-
-    # limit size (avoid token overload)
-    curve_text = ", ".join([
-        f"{date}:{round(val, 2)}" for date, val in ndvi_series[:25]
-    ])
-
-    enhanced_context = {
-        "analysis": analysis,
-        "start_date": start_date,
-        "end_date": end_date,
-        "curve": curve_text
+• vegetation growth
+• decline periods
+• peak vegetation
+• lowest vegetation
+• seasonal behaviour
+• anomalies
+"""
     }
 
-    prompt = build_chat_prompt(enhanced_context, question)
 
-    raw_response = generate_response(prompt)
+def run_chat_pipeline(context, question):
 
-    cleaned = raw_response.strip().replace("```json", "").replace("```", "")
+    print("\n========== CHAT ==========")
 
-    try:
-        parsed = json.loads(cleaned)
-    except Exception as e:
-        print("❌ Chat JSON parse error:", e)
-        parsed = {"answer": cleaned}
+    print("Question:")
+    print(question)
 
-    # 🔥 FIX: flatten response properly
-    if isinstance(parsed, dict) and "answer" in parsed:
-        return {"answer": parsed["answer"]}
+    print("\nCurve Length:")
 
-    return {"answer": str(parsed)}
+    curve = context.get("curve", [])
+
+    if isinstance(curve, list):
+        print(len(curve))
+
+    load_index()
+
+    query_embedding = embed_query(question)
+
+    results = search(
+        query_embedding,
+        top_k=10
+    )
+
+    retrieved_context = "\n\n".join(
+        [r["text"] for r in results]
+    )
+    print(
+        "\n========== RETRIEVED CONTEXT ==========",
+        flush=True
+    )
+
+    print(
+        retrieved_context,
+        flush=True
+    )
+
+    print(
+        "========== END RETRIEVED CONTEXT ==========\n",
+        flush=True
+    )
+
+    with open(
+        "retrieval_debug.txt",
+        "w",
+        encoding="utf-8"
+    ) as f:
+
+        f.write(
+            f"QUESTION:\n{question}\n\n"
+        )
+
+        f.write(
+            "RETRIEVED:\n"
+        )
+
+        f.write(
+            retrieved_context
+        )
+
+        context["retrieved_context"] = retrieved_context
+
+    return context

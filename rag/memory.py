@@ -1,4 +1,4 @@
-GLOBAL_CONTEXT = None
+GLOBAL_CONTEXT = {}
 
 
 def set_memory(data):

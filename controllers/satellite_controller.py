@@ -230,55 +230,73 @@ def timeseries():
 # -------------------- RAG ANALYSIS -------------------- #
 
 def analyze_rag():
+    print("🔥 ANALYZE API HIT", flush=True)
     try:
-        data = request.get_json() or {}
 
-        series = data.get("data")
+        body = request.get_json()
 
-        if not series:
+        data = body.get(
+            "data",
+            []
+        )
+
+        if not data:
+
             return jsonify({
                 "success": False,
-                "error": "Missing 'data'"
+                "error": "No timeseries data received"
             }), 400
 
-        result = analyze_with_rag(series)
+        result = analyze_with_rag(
+            data
+        )
 
-        return jsonify({
-            "success": True,
-            "analysis": result
-        })
+        return jsonify(result)
 
     except Exception as e:
-        logger.error(e, exc_info=True)
+
+        traceback.print_exc()
+
         return jsonify({
             "success": False,
             "error": str(e)
         }), 500
-
-
 # -------------------- RAG CHAT -------------------- #
 
 def chat_rag():
+    print("🔥 CHAT API HIT", flush=True)
     try:
-        data = request.get_json() or {}
 
-        question = data.get("question")
+        body = request.get_json()
+
+        question = body.get(
+            "question",
+            ""
+        )
+
+        context = body.get(
+            "context",
+            {}
+        )
 
         if not question:
+
             return jsonify({
                 "success": False,
-                "error": "Missing 'question'"
+                "error": "Question missing"
             }), 400
 
-        answer = chat_with_rag(question)
+        result = chat_with_rag(
+            context,
+            question
+        )
 
-        return jsonify({
-            "success": True,
-            "answer": answer
-        })
+        return jsonify(result)
 
     except Exception as e:
-        logger.error(e, exc_info=True)
+
+        traceback.print_exc()
+
         return jsonify({
             "success": False,
             "error": str(e)

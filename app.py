@@ -1,8 +1,12 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 from flask import Flask, jsonify
 from flask_cors import CORS
 from config.gee import init_earth_engine
 from routes.satellite_routes import satellite_bp
 import os
+
 
 def create_app():
     app = Flask(__name__)
@@ -26,6 +30,7 @@ def create_app():
         })
 
     return app
+
 
 app = create_app()
 

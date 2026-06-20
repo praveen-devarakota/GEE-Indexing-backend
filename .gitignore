@@ -9,3 +9,10 @@ __pycache__/
 *.pyc
 .env
 node_modules/
+rag/faiss.index
+rag/chunks.pkl
+retrieval_debug.txt
+
+# Optional
+rag_debug.log
+api_debug.txt

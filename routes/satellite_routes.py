@@ -4,17 +4,20 @@ from controllers.satellite_controller import (
     api_health,
     composite,
     timeseries,
-    analyze_rag,   # 🔥 NEW
-    chat_rag       # 🔥 NEW
+    analyze_rag,
+    chat_rag
 )
 
 satellite_bp = Blueprint("satellite", __name__)
 
-# Health
+# -------------------- HEALTH -------------------- #
+
 satellite_bp.route("/health", methods=["GET"])(health_check)
 satellite_bp.route("/api/health", methods=["GET"])(api_health)
 
-# Existing APIs
+
+# -------------------- EXISTING APIs -------------------- #
+
 satellite_bp.route(
     "/api/composite",
     methods=["POST", "OPTIONS"]
@@ -28,11 +31,13 @@ satellite_bp.route(
 
 # -------------------- 🔥 RAG APIs -------------------- #
 
+# Build FAISS index
 satellite_bp.route(
     "/api/analyze",
     methods=["POST"]
 )(analyze_rag)
 
+# Query RAG
 satellite_bp.route(
     "/api/chat",
     methods=["POST"]
