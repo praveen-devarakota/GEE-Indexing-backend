@@ -9,6 +9,7 @@ __pycache__/
 *.pyc
 .env
 node_modules/
+
 rag/faiss.index
 rag/chunks.pkl
 retrieval_debug.txt
